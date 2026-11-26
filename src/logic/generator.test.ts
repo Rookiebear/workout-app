@@ -16,7 +16,9 @@ const WEEKDAYS: Record<number, number[]> = {
   5: [1, 2, 3, 5, 6],
   6: [1, 2, 3, 4, 5, 6],
 }
-const settings = (patch: Partial<Settings> = {}): Settings => ({ ...defaultSettings(), onboarded: true, ...patch })
+/** 構成のテストは時間の制約なしで見る（持ち時間の削減は budget.test.ts） */
+const UNLIMITED = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [d, 600]))
+const settings = (patch: Partial<Settings> = {}): Settings => ({ ...defaultSettings(), onboarded: true, dayBudgets: UNLIMITED, ...patch })
 const trained = MUSCLES.map((m) => m.id).filter((m) => m !== 'abs') as Muscle[]
 
 describe('種目マスタ', () => {

@@ -172,14 +172,38 @@ export function warmupLadder(workWeight: number, count: number, rule: WeightRule
   }))
 }
 
-/** Newest-first history of one exercise from finished sessions */
+const newestFirst = (a: Session, b: Session) => (a.date === b.date ? b.startedAt - a.startedAt : a.date < b.date ? 1 : -1)
+
+/**
+ * 重量提案に使う、ある種目の履歴（新しい順・完了したセッションのみ）。
+ * 痛み・復帰・デロードで一時的に軽くした記録は使わない。ただし探りの記録は新しい起点として使う
+ */
 export function historyFor(sessions: Session[], exerciseId: string, excludeSessionId?: number): HistoryEntry[] {
   return sessions
     .filter((s) => s.status === 'done' && s.id !== excludeSessionId)
-    .sort((a, b) => (a.date === b.date ? b.startedAt - a.startedAt : a.date < b.date ? 1 : -1))
+    .sort(newestFirst)
     .flatMap((s) =>
       s.entries
         .filter((e) => e.exerciseId === exerciseId && working(e.sets).length > 0)
+        .filter((e) => !e.adjust?.length || e.isProbe)
         .map((e) => ({ date: s.date, repMin: e.repMin, repMax: e.repMax, isProbe: e.isProbe, sets: e.sets })),
     )
+}
+
+/** ある種目を実施した日（新しい順・重複なし）。調整した記録も含む */
+export function doneDates(sessions: Session[], exerciseId: string, excludeSessionId?: number): string[] {
+  const dates = sessions
+    .filter((s) => s.status === 'done' && s.id !== excludeSessionId)
+    .filter((s) => s.entries.some((e) => e.exerciseId === exerciseId && working(e.sets).length > 0))
+    .map((s) => s.date)
+  return [...new Set(dates)].sort().reverse()
+}
+
+/** 最後に完了したトレーニングの日 */
+export function lastSessionDate(sessions: Session[], excludeSessionId?: number): string | undefined {
+  return sessions
+    .filter((s) => s.status === 'done' && s.id !== excludeSessionId)
+    .map((s) => s.date)
+    .sort()
+    .pop()
 }

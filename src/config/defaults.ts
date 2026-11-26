@@ -241,6 +241,55 @@ export const PROGRESSION = {
   epleyMaxReps: 10,
 }
 
+// ── 持ち時間による削減 ───────────────────────────────────
+// 単関節種目のセット → 単関節種目そのもの → 多関節種目のセット の順に削る
+export const BUDGET = {
+  /** セットを削るときの下限 */
+  minSets: 2,
+  /** 振り替えで1種目に足せるセット数の上限（元のセット数＋これ） */
+  maxExtraSets: 2,
+}
+
+// ── ブランク復帰（その種目の最終実施日からの経過日数） ──────
+export type ReturnMode = 'once' | 'ramp' | 'probe'
+export const RETURN_RULES: { minDays: number; weight: number | null; sets: number; mode: ReturnMode; label: string }[] = [
+  { minDays: 14, weight: 0.9, sets: 0.8, mode: 'once', label: '2–4週ぶり' }, // 1回実施したら通常に戻す
+  { minDays: 30, weight: 0.8, sets: 0.7, mode: 'ramp', label: '1–3か月ぶり' }, // 2週間かけて段階的に戻す
+  { minDays: 90, weight: null, sets: 0.6, mode: 'probe', label: '3か月以上ぶり' }, // 探り扱い
+]
+export const RETURN_RAMP_DAYS = 14
+/** 最後のトレーニングからこれ以上空いたら、起動時に復帰プランを使うか確認する */
+export const GLOBAL_GAP_DAYS = 14
+
+// ── 痛みによる回避 ───────────────────────────────────────
+export const PAIN = {
+  light: { replaceAt: 2, weight: 0.8, rirPlus: 1 },
+  moderate: { excludeAt: 2, lightenAt: 1, weight: 0.8 },
+  severe: { excludeAt: 1 },
+  /** 解除後の初回 */
+  releaseWeight: 0.9,
+}
+
+export const PAIN_LEVEL_LABEL = { light: '軽い', moderate: '中程度', severe: '強い' } as const
+export const PAIN_LEVEL_HINT = {
+  light: '動かすと少し気になる',
+  moderate: '特定の動きで痛む',
+  severe: '安静時も痛む',
+} as const
+export const SIDE_LABEL = { left: '左', right: '右', both: '両側' } as const
+
+// ── デロード ─────────────────────────────────────────────
+export const DELOAD = {
+  everyWeeks: 6,
+  /** 伸びなしの種目がこの割合を超えたら */
+  stallShare: 1 / 3,
+  setsFactor: 0.5,
+  weightFactor: 0.9,
+  days: 7,
+  /** 見送ったら次に提案するまでの日数 */
+  snoozeDays: 7,
+}
+
 export const RIR_CHOICES = [0, 1, 2, 3, 4]
 
 export const BACKUP_REMIND_DAYS = 14

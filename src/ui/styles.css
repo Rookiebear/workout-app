@@ -142,7 +142,7 @@ p { margin: 0; }
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 44px; padding: 0 16px; border-radius: var(--r-control);
   border: 1px solid var(--line); background: var(--raised); color: var(--text);
-  font-size: 15px; font-weight: 500; box-shadow: var(--highlight);
+  font-size: 15px; font-weight: 500; box-shadow: var(--highlight); white-space: nowrap;
   transition: background-color var(--fast) var(--ease), transform var(--fast) var(--ease), opacity var(--fast) var(--ease);
 }
 .btn:active { transform: scale(0.98); }
@@ -380,3 +380,11 @@ textarea.input { min-height: 96px; resize: vertical; line-height: 22px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }
+
+/* ── Phase 2: adjustments ─────────────── */
+.ex-row .wide { grid-column: 1 / -1; }
+.adjust-line { color: var(--text-3); font-size: 12px; line-height: 16px; }
+.adjust-notes { margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-card); }
+.adjust-notes li { padding: 12px 16px; color: var(--text-2); font-size: 13px; line-height: 20px; }
+.adjust-notes li + li { border-top: 1px solid var(--line); }
+.banner.note-warn { align-items: flex-start; }

@@ -1,37 +1,43 @@
-// Glue between stored data and the pure logic, used by several screens.
+// 保存データと純粋なロジックをつなぐ。複数の画面から使う
 import { MUSCLES, PATTERN_LABEL } from '../config/defaults'
 import { db } from '../db/db'
 import { primaryMuscles } from '../logic/availability'
+import { adjustsFor, finalizeItem, prescribeItem, type DayContext, type Prescription, type PreparedItem } from '../logic/day'
 import { makeItem } from '../logic/generator'
-import { historyFor, suggestNext, warmupLadder, working, type HistoryEntry, type Suggestion } from '../logic/progression'
-import type { Exercise, PlanDay, PlanItem, Session, SessionEntry, SetRecord, Settings } from '../logic/types'
-import { formatKg, weightRuleFor, type WeightRule } from '../logic/weights'
+import { working } from '../logic/progression'
+import type { Adjust, Exercise, PlanItem, Session, SessionEntry, SetRecord } from '../logic/types'
+import { formatKg } from '../logic/weights'
 import type { AppData } from './hooks'
 
-export interface Prescription {
-  ex: Exercise
-  rule: WeightRule
-  suggestion: Suggestion
-  history: HistoryEntry[]
-  warmups: SetRecord[]
+export type { Prescription }
+
+export function dayContext(data: AppData, today: string, excludeSessionId?: number): DayContext {
+  return {
+    exercises: data.exercises,
+    exMap: data.exMap,
+    settings: data.settings,
+    pains: data.pains,
+    sessions: data.sessions,
+    today,
+    excludeSessionId,
+  }
 }
 
-export function prescribe(data: AppData, item: PlanItem | SessionEntry, excludeSessionId?: number): Prescription | undefined {
+type Prescribable = (PlanItem & { adjust?: Adjust[] }) | SessionEntry
+
+/** 重量・回数の提案。調整済みのセット数・RIRと、重量への調整をそのまま使う */
+export function prescribe(data: AppData, item: Prescribable, excludeSessionId?: number): Prescription | undefined {
   const ex = data.exMap.get(item.exerciseId)
   if (!ex) return undefined
-  const rule = weightRuleFor(ex, data.settings)
-  const history = historyFor(data.sessions, ex.id, excludeSessionId)
-  const suggestion = suggestNext({
-    history,
-    target: { repMin: item.repMin, repMax: item.repMax, sets: 'plannedSets' in item ? item.plannedSets : item.sets, targetRir: item.targetRir },
-    rule,
-    initial: data.settings.initialRecords[ex.id],
+  const sets = 'plannedSets' in item ? item.plannedSets : item.sets
+  return prescribeItem(ex, { ...item, sets }, item.adjust ?? [], {
+    sessions: data.sessions,
+    settings: data.settings,
+    excludeSessionId,
   })
-  const warmups = suggestion.weight ? warmupLadder(suggestion.weight, item.warmupSets, rule) : []
-  return { ex, rule, suggestion, history, warmups }
 }
 
-export function entryFromItem(item: PlanItem, isProbe: boolean): SessionEntry {
+export function entryFromItem(item: PreparedItem, isProbe: boolean): SessionEntry {
   return {
     exerciseId: item.exerciseId,
     role: item.role,
@@ -42,17 +48,26 @@ export function entryFromItem(item: PlanItem, isProbe: boolean): SessionEntry {
     plannedSets: item.sets,
     warmupSets: isProbe ? 0 : item.warmupSets,
     isProbe: isProbe || undefined,
+    adjust: item.adjust.length ? item.adjust : undefined,
     sets: [],
   }
 }
 
-export function entryForExercise(ex: Exercise, settings: Settings, data: AppData): SessionEntry {
-  const item = makeItem(ex, settings.mode, settings.modeParams[settings.mode])
+/** セッション中に足す・差し替える種目。今日の調整（復帰・痛み・デロード）も掛ける */
+export function entryForExercise(ex: Exercise, data: AppData, today: string, painAdjust?: Adjust): SessionEntry {
+  const s = data.settings
+  const item = finalizeItem(makeItem(ex, s.mode, s.modeParams[s.mode]), adjustsFor(ex, dayContext(data, today), painAdjust))
   const p = prescribe(data, item)
   return entryFromItem(item, p?.suggestion.kind === 'probe')
 }
 
-export async function startSession(data: AppData, day: PlanDay, dayIndex: number, date: string, budget?: number): Promise<number> {
+export async function startSession(
+  data: AppData,
+  day: { splitName: string; items: PreparedItem[] },
+  dayIndex: number,
+  date: string,
+  budget?: number,
+): Promise<number> {
   const entries = day.items.map((it) => entryFromItem(it, prescribe(data, it)?.suggestion.kind === 'probe'))
   const session: Session = {
     date,
@@ -67,6 +82,20 @@ export async function startSession(data: AppData, day: PlanDay, dayIndex: number
     entries,
   }
   return db.sessions.add(session)
+}
+
+/** 調整の短い表示。例：「デロード・重量90%」 */
+export function adjustLabel(adjust: Adjust[] | undefined): string {
+  if (!adjust?.length) return ''
+  return adjust
+    .map((a) => {
+      const parts = [a.label]
+      if (a.probe) parts.push('探りから')
+      else if (a.weightFactor && a.weightFactor < 1) parts.push(`重量${Math.round(a.weightFactor * 100)}%`)
+      if (a.rirPlus) parts.push(`RIR+${a.rirPlus}`)
+      return parts.join('・')
+    })
+    .join(' / ')
 }
 
 export function formatSets(sets: SetRecord[]): string {

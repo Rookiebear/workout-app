@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks'
-import { DEFAULT_DUMBBELL_MAX, EQUIPMENT, INCREMENT, MODE_LABEL, MODE_POLICY, SPLIT_SUMMARY, dumbbellRange } from '../../config/defaults'
+import { DEFAULT_DAY_BUDGET, DEFAULT_DUMBBELL_MAX, EQUIPMENT, INCREMENT, MODE_LABEL, MODE_POLICY, SPLIT_SUMMARY, dumbbellRange } from '../../config/defaults'
 import { regeneratePlan, updateSettings } from '../../db/db'
 import { isMachine } from '../../logic/availability'
 import type { Mode, Settings } from '../../logic/types'
@@ -11,11 +11,13 @@ export function Onboarding() {
   const { settings, exercises } = useData()
   const [draft, setDraft] = useState<Settings>(settings)
   const [dbMax, setDbMax] = useState(Math.max(...settings.dumbbellWeights, DEFAULT_DUMBBELL_MAX))
+  const [budget, setBudget] = useState(DEFAULT_DAY_BUDGET)
   const set = (patch: Partial<Settings>) => setDraft((d) => ({ ...d, ...patch }))
   const machines = exercises.filter(isMachine)
 
   const finish = async () => {
-    await updateSettings({ ...draft, dumbbellWeights: dumbbellRange(INCREMENT.dumbbellStep, dbMax), onboarded: true })
+    const dayBudgets = Object.fromEntries(draft.weekdays.map((d) => [d, budget]))
+    await updateSettings({ ...draft, dayBudgets, dumbbellWeights: dumbbellRange(INCREMENT.dumbbellStep, dbMax), onboarded: true })
     await regeneratePlan(todayISO())
     go('today', true)
   }
@@ -47,6 +49,12 @@ export function Onboarding() {
         <p class="meta">
           週{draft.weekdays.length}日 · {SPLIT_SUMMARY[draft.weekdays.length] ?? '1日以上選んでください'}
         </p>
+      </section>
+
+      <section class="section stack-8">
+        <h2>1回の持ち時間</h2>
+        <Stepper label="1回の持ち時間" unit="分" value={budget} step={5} min={15} onChange={setBudget} />
+        <p class="meta">ウォームアップ込み。この時間に収まるようにメニューを組みます。曜日ごとの変更は設定から</p>
       </section>
 
       <section class="section stack-8">

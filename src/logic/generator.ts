@@ -1,16 +1,18 @@
 import {
   ABS_SPLITS,
+  DEFAULT_DAY_BUDGET,
   GENERATOR,
   MUSCLE_PRIORITY,
   SPLITS,
   SPLIT_MUSCLES,
-  TIME,
   WARMUP_SETS,
   WEEKDAY_ORDER,
 } from '../config/defaults'
+import { activePains, painAction } from './adjust'
 import { isAvailable, primaryMuscles } from './availability'
+import { estimateSeconds, redistribute, trimToBudget, type Moved, type Cut } from './budget'
 import { weekStartOf } from './dates'
-import type { Exercise, Mode, ModeParams, Muscle, Plan, PlanDay, PlanItem, Role, Settings, SplitKey } from './types'
+import type { Exercise, Mode, ModeParams, Muscle, Pain, Plan, PlanDay, PlanItem, Role, Settings, SplitKey } from './types'
 
 export function roleFor(ex: Exercise, mode: Mode): Role {
   if (mode === 'strength') return ex.isMainLift ? 'main' : 'accessory'
@@ -46,14 +48,32 @@ export interface GenerateInput {
   settings: Settings
   today: string
   previous?: Plan
+  pains?: Pain[]
 }
 
-export function generatePlan({ exercises, settings, today, previous }: GenerateInput): Plan {
+export interface GenerateResult {
+  plan: Plan
+  /** 持ち時間に合わせて削った分（日ごと） */
+  cuts: Cut[][]
+  /** 他の日に回した分 */
+  moved: Moved[]
+  /** 削っても持ち時間を超える日 */
+  over: number[]
+}
+
+export function generatePlan(input: GenerateInput): Plan {
+  return generatePlanDetailed(input).plan
+}
+
+export function generatePlanDetailed({ exercises, settings, today, previous, pains = [] }: GenerateInput): GenerateResult {
   const mode = settings.mode
   const params = settings.modeParams[mode]
   const weekdays = sortWeekdays(settings.weekdays).slice(0, 6)
   const split = SPLITS[Math.max(1, weekdays.length)] ?? SPLITS[1]
-  const pool = exercises.filter((e) => isAvailable(e, settings, today))
+  // 手順1：器具OFF・除外・痛みで「強い」に当たる種目を外す
+  const severe = activePains(pains, today).filter((p) => p.level === 'severe')
+  const pool = exercises.filter((e) => isAvailable(e, settings, today) && painAction(e, severe).action !== 'exclude')
+  const exMap = new Map(exercises.map((e) => [e.id, e]))
   const order = new Map(exercises.map((e, i) => [e.id, i]))
   const favorites = new Set(settings.favorites)
 
@@ -145,22 +165,15 @@ export function generatePlan({ exercises, settings, today, previous }: GenerateI
     fill(true)
     fill(false)
 
-    const items = picked
-      .map((p) => makeItem(p.ex, mode, params, p.sets))
-      .map((item, i) => ({ item, i, ex: picked[i].ex }))
-      .sort(
-        (a, b) =>
-          (a.item.role === 'main' ? 0 : 1) - (b.item.role === 'main' ? 0 : 1) ||
-          (a.ex.isMainLift ? 0 : 1) - (b.ex.isMainLift ? 0 : 1) ||
-          (a.ex.type === 'compound' ? 0 : 1) - (b.ex.type === 'compound' ? 0 : 1) ||
-          a.i - b.i,
-      )
-      .map((x) => x.item)
+    const items = sortItems(
+      picked.map((p) => makeItem(p.ex, mode, params, p.sets)),
+      exMap,
+    )
 
     // Warm-up sets go on a main lift only while its primary muscles are still cold.
     const warmed = new Set<Muscle>()
     for (const item of items) {
-      const prim = primaryMuscles(exMapOf(picked, item.exerciseId))
+      const prim = primaryMuscles(exMap.get(item.exerciseId)!)
       if (item.warmupSets > 0 && prim.every((m) => warmed.has(m))) item.warmupSets = 0
       prim.forEach((m) => warmed.add(m))
     }
@@ -169,11 +182,38 @@ export function generatePlan({ exercises, settings, today, previous }: GenerateI
     days.push({ weekday, splitKey: slot.key, splitName: slot.name, items })
   })
 
-  return { createdAt: today, weekStart: weekStartOf(today), mode, days }
+  // 手順6：持ち時間を超える日は削り、削った分は余裕のある日に回す
+  const budgets = days.map((d) => settings.dayBudgets[d.weekday] ?? DEFAULT_DAY_BUDGET)
+  const trims = days.map((d, i) => trimToBudget(d.items, budgets[i], exMap))
+  const bdays = days.map((d, i) => ({
+    items: trims[i].items,
+    budgetMin: budgets[i],
+    muscles: dayMuscles(d.splitKey, settings.includeAbs),
+  }))
+  const moved = redistribute(bdays, trims.map((t) => t.cuts), exMap)
+  days.forEach((d, i) => (d.items = sortItems(bdays[i].items, exMap)))
+  const over = days.map((d, i) => (estimateSeconds(d.items) > budgets[i] * 60 ? i : -1)).filter((i) => i >= 0)
+
+  return {
+    plan: { createdAt: today, weekStart: weekStartOf(today), mode, days },
+    cuts: trims.map((t) => t.cuts),
+    moved,
+    over,
+  }
 }
 
-function exMapOf(picked: { ex: Exercise }[], id: string): Exercise {
-  return picked.find((p) => p.ex.id === id)!.ex
+/** メイン → 多関節 → 単関節。同じ並びの中では元の順 */
+export function sortItems(items: PlanItem[], exMap: Map<string, Exercise>): PlanItem[] {
+  return items
+    .map((item, i) => ({ item, i, ex: exMap.get(item.exerciseId) }))
+    .sort(
+      (a, b) =>
+        (a.item.role === 'main' ? 0 : 1) - (b.item.role === 'main' ? 0 : 1) ||
+        (a.ex?.isMainLift ? 0 : 1) - (b.ex?.isMainLift ? 0 : 1) ||
+        (a.ex?.type === 'compound' ? 0 : 1) - (b.ex?.type === 'compound' ? 0 : 1) ||
+        a.i - b.i,
+    )
+    .map((x) => x.item)
 }
 
 /** Effective weekly sets per muscle: Σ coefficient × sets */
@@ -219,16 +259,7 @@ export function volumeWarnings(plan: Plan, exMap: Map<string, Exercise>, setting
 
 /** Minutes: warm-up 8 + each set (work 40 s + rest) + 2 per exercise; warm-up sets rest 60 s */
 export function estimateMinutes(items: PlanItem[]): number {
-  if (items.length === 0) return 0
-  const sec = items.reduce(
-    (sum, it) =>
-      sum +
-      TIME.switchMin * 60 +
-      it.sets * (TIME.workSec + it.restSec) +
-      it.warmupSets * (TIME.workSec + TIME.warmupSetRestSec),
-    0,
-  )
-  return Math.round(TIME.warmupMin + sec / 60)
+  return Math.round(estimateSeconds(items) / 60)
 }
 
 /** Alternatives for a swap: shares a primary muscle, same movement pattern listed first */
