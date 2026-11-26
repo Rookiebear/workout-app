@@ -1,6 +1,6 @@
 import { ChevronRight, Plus, RefreshCw } from 'lucide-preact'
 import { useState } from 'preact/hooks'
-import { MODE_LABEL, MUSCLES, SPLIT_SUMMARY, WEEKDAY_LABEL } from '../../config/defaults'
+import { DEFAULT_DAY_BUDGET, MODE_LABEL, MUSCLES, SPLIT_SUMMARY, WEEKDAY_LABEL } from '../../config/defaults'
 import { regeneratePlan, savePlan } from '../../db/db'
 import { estimateMinutes, makeItem, swapCandidates, volumeWarnings, weeklyTally } from '../../logic/generator'
 import type { Muscle, PlanItem } from '../../logic/types'
@@ -89,7 +89,9 @@ export function PlanScreen() {
               </span>{' '}
               {day.splitName}
             </h2>
-            <span class="meta num">約{estimateMinutes(day.items)}分</span>
+            <span class={`meta num${estimateMinutes(day.items) > (settings.dayBudgets[day.weekday] ?? DEFAULT_DAY_BUDGET) ? ' neg' : ''}`}>
+              約{estimateMinutes(day.items)}分 / {settings.dayBudgets[day.weekday] ?? DEFAULT_DAY_BUDGET}分
+            </span>
           </div>
           <div class="list">
             {day.items.map((it, ii) => {

@@ -64,8 +64,8 @@ export async function allExercises(): Promise<Exercise[]> {
 
 /** Build a new weekly plan, preferring the exercises of the current one */
 export async function regeneratePlan(today: string): Promise<Plan> {
-  const [settings, exercises, previous] = await Promise.all([getSettings(), allExercises(), currentPlan()])
-  const plan = generatePlan({ exercises, settings, today, previous })
+  const [settings, exercises, previous, pains] = await Promise.all([getSettings(), allExercises(), currentPlan(), db.pains.toArray()])
+  const plan = generatePlan({ exercises, settings, today, previous, pains })
   const id = await db.plans.add(plan)
   return { ...plan, id }
 }

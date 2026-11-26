@@ -2,14 +2,16 @@ import { ArrowLeftRight, ChevronLeft, ListOrdered, Plus, TriangleAlert, X } from
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { RIR_CHOICES, TIME } from '../../config/defaults'
 import { db, savePlan } from '../../db/db'
+import { activePains, adjustRir, painAction } from '../../logic/adjust'
 import { swapCandidates, makeItem } from '../../logic/generator'
 import { STALLED_TEXT, suggestionText, working } from '../../logic/progression'
-import type { Exercise, Session, SessionEntry, SetRecord } from '../../logic/types'
+import type { Adjust, Exercise, Pain, Session, SessionEntry, SetRecord } from '../../logic/types'
 import { formatKg, isFixedLoad, roundWeight, stepDown, stepUp, type WeightRule } from '../../logic/weights'
 import { Check, ICON, PlateStack, RepLadder, Sheet, Stepper } from '../components'
-import { go, todayISO, toast, useData, useNow } from '../hooks'
+import { go, toast, useData, useNow } from '../hooks'
 import { cancelChime, chimeNow, isChimeScheduled, scheduleChime, unlockAudio } from '../sound'
-import { entryForExercise, formatReps, formatSets, formatShortDate, isSmith, prescribe, weightUnit, type Prescription } from '../workout'
+import { adjustLabel, entryForExercise, formatReps, formatSets, formatShortDate, isSmith, prescribe, weightUnit, type Prescription } from '../workout'
+import { PainSheet } from './Pain'
 import { ExercisePicker, FavoriteButton } from './shared'
 
 interface Row {
@@ -39,7 +41,9 @@ export function SessionScreen() {
   const data = useData()
   const session = data.sessions.find((s) => s.status === 'active')
   const [idx, setIdx] = useState<number | undefined>(undefined)
-  const [sheet, setSheet] = useState<'swap' | 'list' | 'add' | 'finish' | undefined>()
+  const [sheet, setSheet] = useState<'swap' | 'list' | 'add' | 'finish' | 'pain' | undefined>()
+  /** セッション中に「痛む」で記録した痛み。差し替え候補をこれで絞る */
+  const [newPain, setNewPain] = useState<Pain | undefined>()
   // Pin the exercise on open so finishing its last set does not jump away before "次の種目へ"
   useEffect(() => {
     if (idx === undefined && session) setIdx(firstOpen(session))
@@ -101,7 +105,11 @@ export function SessionScreen() {
           index={current}
           onUpdate={updateEntry}
           onNext={() => (current + 1 < session.entries.length ? show(current + 1) : setSheet('finish'))}
-          onSwap={() => setSheet('swap')}
+          onSwap={() => {
+            setNewPain(undefined)
+            setSheet('swap')
+          }}
+          onPain={() => setSheet('pain')}
         />
       ) : (
         <div class="empty">
@@ -150,7 +158,7 @@ export function SessionScreen() {
         <ExercisePicker
           exclude={session.entries.map((e) => e.exerciseId)}
           onPick={async (ex) => {
-            const next = { ...session, entries: [...session.entries, entryForExercise(ex, data.settings, data)] }
+            const next = { ...session, entries: [...session.entries, entryForExercise(ex, data, session.date)] }
             await save(next)
             show(next.entries.length - 1)
             setSheet(undefined)
@@ -165,8 +173,20 @@ export function SessionScreen() {
           session={session}
           entry={entry}
           index={current}
+          pain={newPain}
         />
       )}
+
+      <PainSheet
+        open={sheet === 'pain'}
+        title="どこが痛みますか"
+        exercise={entry ? data.exMap.get(entry.exerciseId) : undefined}
+        onClose={() => setSheet((s) => (s === 'pain' ? undefined : s))}
+        onSaved={(p) => {
+          setNewPain(p)
+          setSheet('swap')
+        }}
+      />
 
       <FinishSheet open={sheet === 'finish'} onClose={() => setSheet(undefined)} session={session} />
     </div>
@@ -180,6 +200,7 @@ function EntryView(props: {
   onUpdate: (patch: Partial<SessionEntry>, extra?: Partial<Session>) => Promise<unknown>
   onNext: () => void
   onSwap: () => void
+  onPain: () => void
 }) {
   const data = useData()
   const { session, entry } = props
@@ -234,6 +255,9 @@ function EntryView(props: {
           <h1 style={{ fontSize: '24px', lineHeight: '30px', marginTop: '2px' }}>{ex.name}</h1>
         </div>
         <div class="hstack" style={{ gap: 0, marginRight: '-8px' }}>
+          <button class="btn quiet small" onClick={props.onPain}>
+            痛む
+          </button>
           <FavoriteButton id={ex.id} />
           <button class="icon-btn" aria-label="差し替え" onClick={props.onSwap}>
             <ArrowLeftRight {...ICON} />
@@ -243,7 +267,7 @@ function EntryView(props: {
 
       <section class="lift" style={{ marginTop: '16px' }}>
         <div class="between">
-          <p class="eyebrow">{entry.isProbe ? '初回は探り' : '今回の提案'}</p>
+          <p class="eyebrow">{entry.isProbe ? (entry.adjust?.some((a) => a.probe) ? '久しぶりなので探り' : '初回は探り') : '今回の提案'}</p>
           <RepLadder min={entry.repMin} max={entry.repMax} target={s.reps[0]} />
         </div>
         {s.weight === null ? (
@@ -261,6 +285,12 @@ function EntryView(props: {
           </>
         )}
         <div class="basis" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+          {entry.adjust?.length ? (
+            <span>
+              {adjustLabel(entry.adjust)}
+              {p.base.weight !== null && p.base.weight !== s.weight && <span class="muted num">（通常なら {formatKg(p.base.weight)} kg）</span>}
+            </span>
+          ) : null}
           {last ? (
             <span class="num">
               前回 {formatShortDate(last.date)} · {formatSets(last.sets)}
@@ -489,23 +519,28 @@ function RestTimer(props: { session: Session; onChange: (rest: Session['rest']) 
   )
 }
 
-function SwapSheet(props: { open: boolean; onClose: () => void; session: Session; entry: SessionEntry; index: number }) {
+function SwapSheet(props: { open: boolean; onClose: () => void; session: Session; entry: SessionEntry; index: number; pain?: Pain }) {
   const data = useData()
   const [alsoPlan, setAlsoPlan] = useState(true)
   const ex = data.exMap.get(props.entry.exerciseId)
   if (!ex) return null
-  const candidates = swapCandidates(ex, data.exercises, data.settings, todayISO()).filter(
-    (c) => !props.session.entries.some((e) => e.exerciseId === c.id),
-  )
+  const today = props.session.date
+  const pains = props.pain ? activePains([...data.pains.filter((p) => p.id !== props.pain!.id), props.pain], today) : []
+  const candidates = swapCandidates(ex, data.exercises, data.settings, today)
+    .filter((c) => !props.session.entries.some((e) => e.exerciseId === c.id))
+    .filter((c) => !props.pain || painAction(c, pains).action === 'ok')
+  const here = props.pain ? painAction(ex, pains) : undefined
+  const keepAdjust: Adjust | undefined = here?.action === 'lighten' ? here.adjust : here?.action === 'replace' ? here.fallback : undefined
 
   const pick = async (next: Exercise) => {
     if (props.entry.sets.length && !confirm('記録済みのセットは消えます。差し替えますか')) return
     const entries = props.session.entries.slice()
-    entries[props.index] = entryForExercise(next, data.settings, data)
+    entries[props.index] = entryForExercise(next, data, today)
     await save({ ...props.session, entries })
     const plan = data.plan
     const dayIndex = props.session.planDayIndex
-    if (alsoPlan && plan && dayIndex !== undefined && plan.days[dayIndex]) {
+    // 痛みによる差し替えは一時的なので、メニューには反映しない
+    if (alsoPlan && !props.pain && plan && dayIndex !== undefined && plan.days[dayIndex]) {
       const days = plan.days.map((d, i) =>
         i !== dayIndex
           ? d
@@ -522,13 +557,46 @@ function SwapSheet(props: { open: boolean; onClose: () => void; session: Session
     props.onClose()
   }
 
+  /** 差し替えずに、痛みの分だけ軽くして続ける */
+  const keep = async () => {
+    if (keepAdjust) {
+      const current = props.entry.adjust ?? []
+      const prev = current.find((a) => a.kind === 'pain')
+      const baseRir = adjustRir(props.entry.targetRir, prev ? [{ ...prev, rirPlus: -(prev.rirPlus ?? 0) }] : [])
+      const entries = props.session.entries.slice()
+      entries[props.index] = {
+        ...props.entry,
+        adjust: [...current.filter((a) => a.kind !== 'pain'), keepAdjust],
+        targetRir: adjustRir(baseRir, [keepAdjust]),
+      }
+      await save({ ...props.session, entries })
+      toast('負担を避けるため、重量を軽くしました')
+    }
+    props.onClose()
+  }
+
   return (
-    <Sheet open={props.open} onClose={props.onClose} title={`${ex.name}の代わり`}>
-      <label class="field-row" style={{ padding: '4px 0', marginBottom: '8px' }}>
-        <span class="meta">次回以降のメニューにも反映</span>
-        <input type="checkbox" checked={alsoPlan} onChange={(e) => setAlsoPlan((e.target as HTMLInputElement).checked)} style={{ width: '22px', height: '22px' }} />
-      </label>
+    <Sheet open={props.open} onClose={props.onClose} title={props.pain ? '負担の少ない種目に替える' : `${ex.name}の代わり`}>
+      {props.pain ? (
+        <p class="meta" style={{ marginBottom: '12px' }}>
+          {here?.action === 'exclude'
+            ? 'いまの種目はこの関節への負担が大きいので、替えるか飛ばすのがおすすめです'
+            : here?.action === 'ok'
+              ? 'いまの種目はこの関節への負担が小さめです。続けても、替えてもかまいません'
+              : '替えない場合は重量を軽くして続けます'}
+        </p>
+      ) : (
+        <label class="field-row" style={{ padding: '4px 0', marginBottom: '8px' }}>
+          <span class="meta">次回以降のメニューにも反映</span>
+          <input type="checkbox" checked={alsoPlan} onChange={(e) => setAlsoPlan((e.target as HTMLInputElement).checked)} style={{ width: '22px', height: '22px' }} />
+        </label>
+      )}
       <ExercisePicker candidates={candidates} onPick={pick} />
+      {props.pain && here?.action !== 'exclude' && (
+        <button class="btn block" style={{ marginTop: '12px' }} onClick={keep}>
+          {keepAdjust ? '替えずに軽くして続ける' : '替えずに続ける'}
+        </button>
+      )}
     </Sheet>
   )
 }

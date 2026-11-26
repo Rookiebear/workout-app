@@ -93,6 +93,29 @@ export interface Settings {
   /** weekday → minutes */
   dayBudgets: Record<number, number>
   lastExportAt?: string
+  /** 受け入れたデロードの期間 */
+  deload?: { start: string; end: string }
+  /** 直近のデロードの最終日。6週のカウントはここから */
+  lastDeloadEnd?: string
+  /** 見送ったデロード提案を再び出さない最終日 */
+  deloadSnoozeUntil?: string
+  /** 全体の空白に対する復帰プランの返事。gapStart はその空白の直前の実施日 */
+  returnDecision?: { gapStart: string; use: boolean }
+  /** 痛みの確認をした日 */
+  painCheckedOn?: string
+}
+
+export type AdjustKind = 'return' | 'pain' | 'release' | 'deload'
+
+/** 重量・セット・RIRへの一時的な調整。調整したセットは重量提案の履歴に使わない */
+export interface Adjust {
+  kind: AdjustKind
+  label: string
+  weightFactor?: number
+  setsFactor?: number
+  rirPlus?: number
+  /** 探りに戻す（3か月以上のブランク） */
+  probe?: boolean
 }
 
 export type Role = 'main' | 'accessory'
@@ -143,6 +166,7 @@ export interface SessionEntry {
   plannedSets: number
   warmupSets: number
   isProbe?: boolean
+  adjust?: Adjust[]
   sets: SetRecord[]
 }
 

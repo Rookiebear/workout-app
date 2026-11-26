@@ -9,6 +9,9 @@ import {
   MUSCLES,
   PATTERN_LABEL,
   SPLIT_SUMMARY,
+  DEFAULT_DAY_BUDGET,
+  WEEKDAY_LABEL,
+  WEEKDAY_ORDER,
 } from '../../config/defaults'
 import { db, exportAll, importAll, regeneratePlan, updateSettings } from '../../db/db'
 import { isActiveExclusion, isMachine, unavailableReason } from '../../logic/availability'
@@ -104,6 +107,34 @@ export function SettingsScreen() {
         <WeekdayPicker value={settings.weekdays} onChange={(weekdays) => weekdays.length && updateAndRegenerate({ weekdays })} />
         <p class="meta">
           週{settings.weekdays.length}日 · {SPLIT_SUMMARY[settings.weekdays.length]}
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>持ち時間</h2>
+          <span class="meta">ウォームアップ込み</span>
+        </div>
+        <div class="list">
+          {WEEKDAY_ORDER.filter((d) => settings.weekdays.includes(d)).map((d) => (
+            <div class="field-row">
+              <span>{WEEKDAY_LABEL[d]}曜</span>
+              <div style={{ width: '168px' }}>
+                <Stepper
+                  compact
+                  label={`${WEEKDAY_LABEL[d]}曜の持ち時間`}
+                  unit="分"
+                  value={settings.dayBudgets[d] ?? DEFAULT_DAY_BUDGET}
+                  step={5}
+                  min={15}
+                  onChange={(v) => updateAndRegenerate({ dayBudgets: { ...settings.dayBudgets, [d]: v } })}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p class="meta" style={{ marginTop: '8px' }}>
+          超える日は、単関節種目のセット → 単関節種目 → 多関節種目のセットの順に削り、削った分は余裕のある日に回します
         </p>
       </section>
 

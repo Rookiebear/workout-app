@@ -2,7 +2,7 @@ import { liveQuery } from 'dexie'
 import { createContext } from 'preact'
 import { useContext, useEffect, useState } from 'preact/hooks'
 import { toISODate } from '../logic/dates'
-import type { Exercise, Plan, Session, Settings } from '../logic/types'
+import type { Exercise, Pain, Plan, Session, Settings } from '../logic/types'
 
 export function useLive<T>(fn: () => Promise<T>, deps: unknown[] = []): T | undefined {
   const [value, setValue] = useState<T | undefined>(undefined)
@@ -58,6 +58,7 @@ export interface AppData {
   exMap: Map<string, Exercise>
   plan?: Plan
   sessions: Session[]
+  pains: Pain[]
 }
 
 export const DataContext = createContext<AppData>(null as never)

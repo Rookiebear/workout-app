@@ -22,13 +22,14 @@ export function App() {
   const exercises = useLive(allExercises)
   const plan = useLive(currentPlan)
   const sessions = useLive(() => db.sessions.toArray())
+  const pains = useLive(() => db.pains.toArray())
   const route = useRoute()
   const message = useToast()
 
   const data = useMemo<AppData | undefined>(() => {
-    if (!settings || !exercises || !sessions) return undefined
-    return { settings, exercises, exMap: new Map(exercises.map((e) => [e.id, e])), plan, sessions }
-  }, [settings, exercises, plan, sessions])
+    if (!settings || !exercises || !sessions || !pains) return undefined
+    return { settings, exercises, exMap: new Map(exercises.map((e) => [e.id, e])), plan, sessions, pains }
+  }, [settings, exercises, plan, sessions, pains])
 
   if (!data) return <div class="app" />
   if (!data.settings.onboarded)
